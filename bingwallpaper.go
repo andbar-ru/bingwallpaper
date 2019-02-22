@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
@@ -22,10 +21,9 @@ import (
 )
 
 const (
-	BASE_URL       = "https://bingwallpaper.com"
-	RESOLUTION     = "1920x1080"
+	BASE_URL       = "https://bing.gifposter.com"
 	LAYOUT         = "20060102"
-	COPYRIGHT_TEXT = "- Bing™ Wallpaper Gallery"
+	COPYRIGHT_TEXT = "©"
 )
 
 var (
@@ -43,53 +41,39 @@ func check(err error) {
 	}
 }
 
-// Download wallpaper at the specified date.
-func downloadWallpaper(date time.Time) (string, string) {
+// Download wallpaper from the url.
+func downloadWallpaper(url string) (time.Time, string, string) {
+	var date time.Time
 	var filename, title string
 
 	// Fetch the page with photo
-	url := fmt.Sprintf("%s/%s.html", BASE_URL, date.Format(LAYOUT))
-	res, err := http.Get(url)
+	response, err := http.Get(url)
 	check(err)
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		log.Panicf("status code error: %d %s", res.StatusCode, res.Status)
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		log.Panicf("status code error: %d %s", response.StatusCode, response.Status)
 	}
 
 	// Parse the page and fetch the image metadata
-	root, err := goquery.NewDocumentFromReader(res.Body)
+	root, err := goquery.NewDocumentFromReader(response.Body)
 	check(err)
-	imgContainers := root.Find(".imgContainer")
-	if imgContainers.Length() == 0 {
-		photos := root.Find("#photos")
-		if photos.Text() != "\n' title='Previous' hidefocus='true' target='_self' class='nph_btn_pphoto' id='photoPrev'>" {
-			log.Panicf("photos have unexpected text: %s", photos.Text())
-		}
-		title = "There is no wallpaper on this date"
-		return filename, title
-	}
+	detail := root.Find(".detail")
+	dateStr := detail.Find("time[itemprop='date']").Text()
+	date, err = time.Parse("Jan 02, 2006", dateStr)
+	check(err)
 
-	imgContainer := imgContainers.First()
-	img := imgContainer.Find("img").First()
-	titleTag := root.Find("title").First()
-	if titleTag.Length() == 0 {
-		log.Panicf("Page on url %s hasn't title tag", url)
-	}
-	title = titleTag.Text()
+	title = detail.Find(".title").Text()
 	copyrightIndex := strings.Index(title, COPYRIGHT_TEXT)
 	if copyrightIndex != -1 {
 		title = strings.Trim(title[:copyrightIndex], " ")
 	}
+
+	img := root.Find("#bing_wallpaper")
 	src, ok := img.Attr("src")
 	if !ok {
-		log.Panic("img has not attribute 'src'")
+		log.Panicf("Could not find img src on url %s", url)
 	}
-	src = strings.TrimLeft(src, "/")
-	if !strings.HasPrefix(src, "https://") {
-		src = "https://" + src
-	}
-	var re = regexp.MustCompile(`\d+x\d+(\.\w+$)`)
-	src = re.ReplaceAllString(src, RESOLUTION+"$1") // change resolution
+	src = BASE_URL + src
 	lastSlashIndex := strings.LastIndex(src, "/")
 	filename = src[lastSlashIndex+1:]
 	filepath := fmt.Sprintf("%s/%s", IMG_DIR, filename)
@@ -100,7 +84,7 @@ func downloadWallpaper(date time.Time) (string, string) {
 		log.Panicf("Could not create file %s, err: %s", filepath, err)
 	}
 	defer output.Close()
-	response, err := http.Get(src)
+	response, err = http.Get(src)
 	if err != nil {
 		log.Panicf("Could not download image from %s, err: %s", src, err)
 	}
@@ -110,7 +94,7 @@ func downloadWallpaper(date time.Time) (string, string) {
 		log.Panicf("Could not write image to file, err: %s", err)
 	}
 
-	return filename, title
+	return date, filename, title
 }
 
 // Set wallpaper and show message with title.
@@ -121,7 +105,7 @@ func setWallpaper(filename, title string) {
 	err := setWallpaperCmd.Start()
 	check(err)
 
-	msgCmd := exec.Command("xmessage", "-buttons", "OK", "-title", "New wallpaper", "-center", title)
+	msgCmd := exec.Command("zenity", "--info", "--text", title)
 	err = msgCmd.Start()
 	check(err)
 }
@@ -144,7 +128,7 @@ func main() {
 		check(err)
 	}
 
-	// If date of last downloaded image is today, exit
+	// Fetch the last date and, if the last date is today, exit
 	_, err = os.Stat(WP_FILE)
 	if os.IsNotExist(err) {
 		f, err := os.Create(WP_FILE)
@@ -164,28 +148,51 @@ func main() {
 			os.Exit(0)
 		}
 	}
+	if lastDate.IsZero() {
+		lastDate = YESTERDAY
+	}
 
-	var filenameYesterday, titleYesterday string
+	// Page with thumbs.
+	response, err := http.Get(BASE_URL)
+	check(err)
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		log.Panicf("status code error: %d %s", response.StatusCode, response.Status)
+	}
+	root, err := goquery.NewDocumentFromReader(response.Body)
+	check(err)
+	thumbs := root.Find("article.thumb")
+	if thumbs.Length() == 0 {
+		log.Panicf("Could not find thumbs")
+	}
 
-	// Download wallpapers at dates before today if not yet downloaded.
-	if !lastDate.IsZero() && lastDate.Before(YESTERDAY) {
-		curDate := lastDate.AddDate(0, 0, 1)
-		var filename, title string
-		for !curDate.After(YESTERDAY) {
-			filename, title = downloadWallpaper(curDate)
-			logWallpaper(curDate, filename, title)
-			curDate = curDate.AddDate(0, 0, 1)
+	// Collect urls until the last date
+	urls := make([]string, 0)
+	thumbs.EachWithBreak(func(i int, thumb *goquery.Selection) bool {
+		dateStr := thumb.Find("time.date").First().Text()
+		date, err := time.Parse("Jan 02, 2006", dateStr)
+		check(err)
+
+		if !date.After(lastDate) {
+			return false
 		}
-		filenameYesterday = filename
-		titleYesterday = title
-	}
 
-	// Download wallpaper at today
-	filename, title := downloadWallpaper(TODAY)
-	if filename != "" {
-		setWallpaper(filename, title)
-		logWallpaper(TODAY, filename, title)
-	} else if filenameYesterday != "" {
-		setWallpaper(filenameYesterday, titleYesterday)
+		href, ok := thumb.Find("a").First().Attr("href")
+		if !ok {
+			log.Panicf("Could not find url at date %s", date.Format(LAYOUT))
+		}
+		url := BASE_URL + href
+		urls = append(urls, url)
+		return true
+	})
+
+	// Range urls from the end until the first: only download and log.
+	for i := len(urls) - 1; i > 0; i-- {
+		date, filename, title := downloadWallpaper(urls[i])
+		logWallpaper(date, filename, title)
 	}
+	// For the first url further set wallpaper and output message.
+	date, filename, title := downloadWallpaper(urls[0])
+	setWallpaper(filename, title)
+	logWallpaper(date, filename, title)
 }
