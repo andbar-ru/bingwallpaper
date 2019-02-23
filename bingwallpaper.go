@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	BASE_URL       = "https://bing.gifposter.com"
-	LAYOUT         = "20060102"
-	COPYRIGHT_TEXT = "©"
+	BASE_URL = "https://bing.gifposter.com"
+	LAYOUT   = "20060102"
 )
 
 var (
@@ -44,7 +43,7 @@ func check(err error) {
 // Download wallpaper from the url.
 func downloadWallpaper(url string) (time.Time, string, string) {
 	var date time.Time
-	var filename, title string
+	var filename, description string
 
 	// Fetch the page with photo
 	response, err := http.Get(url)
@@ -62,11 +61,7 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 	date, err = time.Parse("Jan 02, 2006", dateStr)
 	check(err)
 
-	title = detail.Find(".title").Text()
-	copyrightIndex := strings.Index(title, COPYRIGHT_TEXT)
-	if copyrightIndex != -1 {
-		title = strings.Trim(title[:copyrightIndex], " ")
-	}
+	description = detail.Find(".description").Text()
 
 	img := root.Find("#bing_wallpaper")
 	src, ok := img.Attr("src")
@@ -94,27 +89,27 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 		log.Panicf("Could not write image to file, err: %s", err)
 	}
 
-	return date, filename, title
+	return date, filename, description
 }
 
-// Set wallpaper and show message with title.
-func setWallpaper(filename, title string) {
+// Set wallpaper and show message with description.
+func setWallpaper(filename, description string) {
 	filepath := fmt.Sprintf("%s/%s", IMG_DIR, filename)
 
 	setWallpaperCmd := exec.Command("fbsetbg", "-f", filepath)
 	err := setWallpaperCmd.Start()
 	check(err)
 
-	msgCmd := exec.Command("zenity", "--info", "--text", title)
+	msgCmd := exec.Command("zenity", "--info", "--width=600", "height=400", "--text", description)
 	err = msgCmd.Start()
 	check(err)
 }
 
 // Save record about wallpaper into file.
-func logWallpaper(date time.Time, filename, title string) {
+func logWallpaper(date time.Time, filename, description string) {
 	// Escape single quotes for sed.
-	title = strings.Replace(title, "'", `\x27`, -1)
-	line := fmt.Sprintf("%s %s %s\\n", date.Format(LAYOUT), filename, title)
+	description = strings.Replace(description, "'", `\x27`, -1)
+	line := fmt.Sprintf("%s %s %s\\n", date.Format(LAYOUT), filename, description)
 	sedCmd := exec.Command("sed", "-i", fmt.Sprintf("1s;^;%s;", line), WP_FILE)
 	err := sedCmd.Start()
 	check(err)
@@ -188,11 +183,11 @@ func main() {
 
 	// Range urls from the end until the first: only download and log.
 	for i := len(urls) - 1; i > 0; i-- {
-		date, filename, title := downloadWallpaper(urls[i])
-		logWallpaper(date, filename, title)
+		date, filename, description := downloadWallpaper(urls[i])
+		logWallpaper(date, filename, description)
 	}
 	// For the first url further set wallpaper and output message.
-	date, filename, title := downloadWallpaper(urls[0])
-	setWallpaper(filename, title)
-	logWallpaper(date, filename, title)
+	date, filename, description := downloadWallpaper(urls[0])
+	setWallpaper(filename, description)
+	logWallpaper(date, filename, description)
 }
