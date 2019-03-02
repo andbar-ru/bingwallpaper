@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	BASE_URL = "https://bing.gifposter.com"
-	LAYOUT   = "20060102"
+	BASE_URL           = "https://bing.gifposter.com"
+	LOCAL_DATE_LAYOUT  = "20060102"
+	REMOTE_DATE_LAYOUT = "Jan 2, 2006"
 )
 
 var (
@@ -58,7 +59,7 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 	check(err)
 	detail := root.Find(".detail")
 	dateStr := detail.Find("time[itemprop='date']").Text()
-	date, err = time.Parse("Jan 02, 2006", dateStr)
+	date, err = time.Parse(REMOTE_DATE_LAYOUT, dateStr)
 	check(err)
 
 	description = detail.Find(".description").Text()
@@ -109,7 +110,7 @@ func setWallpaper(filename, description string) {
 func logWallpaper(date time.Time, filename, description string) {
 	// Escape single quotes for sed.
 	description = strings.Replace(description, "'", `\x27`, -1)
-	line := fmt.Sprintf("%s %s %s\\n", date.Format(LAYOUT), filename, description)
+	line := fmt.Sprintf("%s %s %s\\n", date.Format(LOCAL_DATE_LAYOUT), filename, description)
 	sedCmd := exec.Command("sed", "-i", fmt.Sprintf("1s;^;%s;", line), WP_FILE)
 	err := sedCmd.Start()
 	check(err)
@@ -137,7 +138,7 @@ func main() {
 		lastDateBytes := make([]byte, 8) // YYYYMMDD
 		_, err = f.Read(lastDateBytes)
 		check(err)
-		lastDate, err = time.Parse(LAYOUT, string(lastDateBytes))
+		lastDate, err = time.Parse(LOCAL_DATE_LAYOUT, string(lastDateBytes))
 		check(err)
 		if lastDate == TODAY {
 			os.Exit(0)
@@ -165,7 +166,7 @@ func main() {
 	urls := make([]string, 0)
 	thumbs.EachWithBreak(func(i int, thumb *goquery.Selection) bool {
 		dateStr := thumb.Find("time.date").First().Text()
-		date, err := time.Parse("Jan 02, 2006", dateStr)
+		date, err := time.Parse(REMOTE_DATE_LAYOUT, dateStr)
 		check(err)
 
 		if !date.After(lastDate) {
@@ -174,7 +175,7 @@ func main() {
 
 		href, ok := thumb.Find("a").First().Attr("href")
 		if !ok {
-			log.Panicf("Could not find url at date %s", date.Format(LAYOUT))
+			log.Panicf("Could not find url at date %s", date.Format(LOCAL_DATE_LAYOUT))
 		}
 		url := BASE_URL + href
 		urls = append(urls, url)
