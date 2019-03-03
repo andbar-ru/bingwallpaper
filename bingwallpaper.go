@@ -182,13 +182,15 @@ func main() {
 		return true
 	})
 
-	// Range urls from the end until the first: only download and log.
-	for i := len(urls) - 1; i > 0; i-- {
-		date, filename, description := downloadWallpaper(urls[i])
+	// If there are new urls, range them from the end until the first: only download and log.
+	if len(urls) > 0 {
+		for i := len(urls) - 1; i > 0; i-- {
+			date, filename, description := downloadWallpaper(urls[i])
+			logWallpaper(date, filename, description)
+		}
+		// For the first url further set wallpaper and output message.
+		date, filename, description := downloadWallpaper(urls[0])
+		setWallpaper(filename, description)
 		logWallpaper(date, filename, description)
 	}
-	// For the first url further set wallpaper and output message.
-	date, filename, description := downloadWallpaper(urls[0])
-	setWallpaper(filename, description)
-	logWallpaper(date, filename, description)
 }
