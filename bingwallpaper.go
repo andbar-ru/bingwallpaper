@@ -51,7 +51,7 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 	check(err)
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		log.Panicf("status code error: %d %s", response.StatusCode, response.Status)
+		log.Panicf("%s: status code error: %d %s", url, response.StatusCode, response.Status)
 	}
 
 	// Parse the page and fetch the image metadata
@@ -108,8 +108,9 @@ func setWallpaper(filename, description string) {
 
 // Save record about wallpaper into file.
 func logWallpaper(date time.Time, filename, description string) {
-	// Escape single quotes for sed.
+	// Escape some characters for sed.
 	description = strings.Replace(description, "'", `\x27`, -1)
+	description = strings.Replace(description, ";", `\x3b`, -1)
 	line := fmt.Sprintf("%s %s %s\\n", date.Format(LOCAL_DATE_LAYOUT), filename, description)
 	sedCmd := exec.Command("sed", "-i", fmt.Sprintf("1s;^;%s;", line), WP_FILE)
 	err := sedCmd.Start()
@@ -171,6 +172,10 @@ func main() {
 
 		if !date.After(lastDate) {
 			return false
+		}
+		// Tomorrow date may exist but attempt to download wallpaper returns error 404.
+		if date.After(TODAY) {
+			return true
 		}
 
 		href, ok := thumb.Find("a").First().Attr("href")
