@@ -8,6 +8,7 @@ YYYYMMDD <wallpaper-file-name> <description>.
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -101,7 +102,7 @@ func setWallpaper(filename, description string) {
 	err := setWallpaperCmd.Start()
 	check(err)
 
-	msgCmd := exec.Command("zenity", "--info", "--width=600", "height=400", "--text", description)
+	msgCmd := exec.Command("zenity", "--info", "--width=600", "--no-markup", "--text", description)
 	err = msgCmd.Start()
 	check(err)
 }
@@ -109,12 +110,27 @@ func setWallpaper(filename, description string) {
 // Save record about wallpaper into file.
 func logWallpaper(date time.Time, filename, description string) {
 	// Escape some characters for sed.
-	description = strings.Replace(description, "'", `\x27`, -1)
-	description = strings.Replace(description, ";", `\x3b`, -1)
-	line := fmt.Sprintf("%s %s %s\\n", date.Format(LOCAL_DATE_LAYOUT), filename, description)
+	fixedDescription := description
+	fixedDescription = strings.Replace(fixedDescription, "&", `\x26`, -1)
+	fixedDescription = strings.Replace(fixedDescription, "'", `\x27`, -1)
+	fixedDescription = strings.Replace(fixedDescription, ";", `\x3b`, -1)
+	line := fmt.Sprintf("%s %s %s\\n", date.Format(LOCAL_DATE_LAYOUT), filename, fixedDescription)
 	sedCmd := exec.Command("sed", "-i", fmt.Sprintf("1s;^;%s;", line), WP_FILE)
-	err := sedCmd.Start()
+	err := sedCmd.Run()
 	check(err)
+
+	// Check that first line matches original description.
+	f, err := os.Open(WP_FILE)
+	check(err)
+	defer f.Close()
+	reader := bufio.NewReader(f)
+	firstLine, err := reader.ReadString('\n')
+	check(err)
+	substrings := strings.SplitN(firstLine, " ", 3)
+	savedDescription := substrings[len(substrings)-1]
+	if strings.TrimSpace(savedDescription) != strings.TrimSpace(description) {
+		log.Printf("%s: Original description and saved description are mismatched.", date.Format(LOCAL_DATE_LAYOUT))
+	}
 }
 
 func main() {
@@ -139,6 +155,8 @@ func main() {
 		lastDateBytes := make([]byte, 8) // YYYYMMDD
 		_, err = f.Read(lastDateBytes)
 		check(err)
+		f.Close()
+
 		lastDate, err = time.Parse(LOCAL_DATE_LAYOUT, string(lastDateBytes))
 		check(err)
 		if lastDate == TODAY {
