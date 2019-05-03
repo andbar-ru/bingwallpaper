@@ -55,25 +55,20 @@ func getResponse(url string) *http.Response {
 }
 
 // Download wallpaper from the url.
-func downloadWallpaper(url string) (time.Time, string, string) {
+func downloadWallpaper(url string) (time.Time, string, string, string) {
 	var date time.Time
-	var filename, description string
+	var filename, title, description string
 
-	// Page with photo metadata.
+	// Transitional page.
 	response := getResponse(url)
 	defer response.Body.Close()
 	root, err := goquery.NewDocumentFromReader(response.Body)
 	check(err)
 
-	// Parse the page and fetch the image metadata and href.
-	solo := root.Find("section.solo")
-	dateStr := solo.Find("time").Text()
-	date, err = time.Parse(remoteDateLayout, dateStr)
-	check(err)
-	description = solo.Find("article.fl p").Text()
-	href, ok := solo.Find("a.fl").First().Attr("href")
+	// Parse the page and fetch href for the next page.
+	href, ok := root.Find("a.fl").First().Attr("href")
 	if !ok {
-		log.Panicf("Could not find solo href at date %s", date.Format(localDateLayout))
+		log.Panicf("Could not find href on the transitional page at date %s", date.Format(localDateLayout))
 	}
 	href = baseURL + href
 
@@ -82,6 +77,16 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 	defer response.Body.Close()
 	root, err = goquery.NewDocumentFromReader(response.Body)
 	check(err)
+
+	detail := root.Find("div.detail")
+	dateStr := detail.Find("time[itemprop='date']").Text()
+	date, err = time.Parse(remoteDateLayout, dateStr)
+	check(err)
+
+	title = detail.Find("div.title").Text()
+	title = strings.TrimSpace(strings.Split(title, "©")[0])
+
+	description = detail.Find("div.description").Text()
 
 	img := root.Find("#bing_wallpaper")
 	src, ok := img.Attr("src")
@@ -105,7 +110,7 @@ func downloadWallpaper(url string) (time.Time, string, string) {
 		log.Panicf("Could not write image to file, err: %s", err)
 	}
 
-	return date, filename, description
+	return date, filename, title, description
 }
 
 // Set wallpaper and show message with description.
@@ -116,7 +121,7 @@ func setWallpaper(filename, title, description string) {
 	err := setWallpaperCmd.Start()
 	check(err)
 
-	msgCmd := exec.Command("zenity", "--info", "--width=600", "--no-markup", "--title", title, "--text", title+".\n\n"+description)
+	msgCmd := exec.Command("zenity", "--info", "--width=600", "--no-markup", "--title", title, "--text", title+"\n\n"+description)
 	err = msgCmd.Start()
 	check(err)
 }
@@ -193,9 +198,8 @@ func main() {
 		log.Panicf("Could not find thumbs")
 	}
 
-	// Collect urls and titles until the last date.
+	// Collect urls until the last date.
 	urls := make([]string, 0)
-	titles := make([]string, 0)
 	thumbs.EachWithBreak(func(i int, thumb *goquery.Selection) bool {
 		dateStr := thumb.Find("time").First().Text()
 		date, err := time.Parse(remoteDateLayout, dateStr)
@@ -216,24 +220,19 @@ func main() {
 		url := baseURL + href
 		urls = append(urls, url)
 
-		title := thumb.Find("span").First().Text()
-		if title == "" {
-			log.Panicf("Thumb without a title at date %s?", date.Format(localDateLayout))
-		}
-		titles = append(titles, title)
-
 		return true
 	})
 
-	// If there are new urls, range them from last to first exclusive: only download and log.
+	// If there are new urls, range them from last to first.
 	if len(urls) > 0 {
+		// Except first: only download and log.
 		for i := len(urls) - 1; i > 0; i-- {
-			date, filename, description := downloadWallpaper(urls[i])
-			logWallpaper(date, filename, titles[i], description)
+			date, filename, title, description := downloadWallpaper(urls[i])
+			logWallpaper(date, filename, title, description)
 		}
 		// For the first url further set wallpaper and output message.
-		date, filename, description := downloadWallpaper(urls[0])
-		setWallpaper(filename, titles[0], description)
-		logWallpaper(date, filename, titles[0], description)
+		date, filename, title, description := downloadWallpaper(urls[0])
+		setWallpaper(filename, title, description)
+		logWallpaper(date, filename, title, description)
 	}
 }
