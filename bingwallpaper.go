@@ -1,5 +1,5 @@
 /*
-Script downloads today's wallpaper from bingwallpaper.com, sets wallpaper and shows message with
+Script downloads today's wallpaper from bing.gifposter.com, sets wallpaper and shows message with
 wallpaper description. Information about downloaded wallpapers is saved into wpFile. If today's
 wallpaper has been downloaded already, script does nothing. If there are missed dates, script
 downloads wallpapers at that dates. wpFile's lines have the following format:
@@ -43,24 +43,28 @@ func check(err error) {
 	}
 }
 
-func getResponse(url string) *http.Response {
+func getResponse(url string) (*http.Response, error) {
 	response, err := http.Get(url)
 	if err != nil {
-		log.Panicf("Could not get response from url %s", url)
+		return nil, fmt.Errorf("Could not get response from url %s: %s", url, err)
 	}
 	if response.StatusCode != 200 {
-		log.Panicf("%s: status code error: %d %s", url, response.StatusCode, response.Status)
+		return nil, fmt.Errorf("%s: status code error: %d %s", url, response.StatusCode, response.Status)
 	}
-	return response
+	return response, nil
 }
 
 // Download wallpaper from the url.
-func downloadWallpaper(url string) (time.Time, string, string, string) {
+func downloadWallpaper(url string) (time.Time, string, string, string, error) {
 	var date time.Time
 	var filename, title, description string
 
 	// Transitional page.
-	response := getResponse(url)
+	response, err := getResponse(url)
+	// Sometimes transitional page returns error 500.
+	if err != nil {
+		return date, filename, title, description, err
+	}
 	defer response.Body.Close()
 	root, err := goquery.NewDocumentFromReader(response.Body)
 	check(err)
@@ -73,7 +77,8 @@ func downloadWallpaper(url string) (time.Time, string, string, string) {
 	href = baseURL + href
 
 	// Page with photo.
-	response = getResponse(href)
+	response, err = getResponse(href)
+	check(err)
 	defer response.Body.Close()
 	root, err = goquery.NewDocumentFromReader(response.Body)
 	check(err)
@@ -103,14 +108,15 @@ func downloadWallpaper(url string) (time.Time, string, string, string) {
 		log.Panicf("Could not create file %s, err: %s", filepath, err)
 	}
 	defer output.Close()
-	response = getResponse(src)
+	response, err = getResponse(src)
+	check(err)
 	defer response.Body.Close()
 	_, err = io.Copy(output, response.Body)
 	if err != nil {
 		log.Panicf("Could not write image to file, err: %s", err)
 	}
 
-	return date, filename, title, description
+	return date, filename, title, description, nil
 }
 
 // Set wallpaper and show message with description.
@@ -161,7 +167,7 @@ func main() {
 		check(err)
 	}
 
-	// Fetch the last date and, if the last date is today, exit
+	// Fetch the last date and, if the last date is today, exit.
 	_, err = os.Stat(wpFile)
 	if os.IsNotExist(err) {
 		f, err := os.Create(wpFile)
@@ -188,7 +194,8 @@ func main() {
 	}
 
 	// Page with thumbs.
-	response := getResponse(startURL)
+	response, err := getResponse(startURL)
+	check(err)
 	defer response.Body.Close()
 	root, err := goquery.NewDocumentFromReader(response.Body)
 	check(err)
@@ -227,11 +234,18 @@ func main() {
 	if len(urls) > 0 {
 		// Except first: only download and log.
 		for i := len(urls) - 1; i > 0; i-- {
-			date, filename, title, description := downloadWallpaper(urls[i])
+			date, filename, title, description, err := downloadWallpaper(urls[i])
+			if err != nil {
+				// For historical wallpapers it's not fatal.
+				log.Println(err)
+				continue
+			}
 			logWallpaper(date, filename, title, description)
 		}
 		// For the first url further set wallpaper and output message.
-		date, filename, title, description := downloadWallpaper(urls[0])
+		date, filename, title, description, err := downloadWallpaper(urls[0])
+		// For the first wallpaper error is fatal.
+		check(err)
 		setWallpaper(filename, title, description)
 		logWallpaper(date, filename, title, description)
 	}
